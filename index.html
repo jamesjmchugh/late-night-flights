@@ -92,11 +92,13 @@
     font-size: 14px;
     line-height: 1.55;
     white-space: pre;
+    /* --ui is set from CONFIG.UI_SCALE in JS; scale from each anchored corner */
+    transform: scale(var(--ui, 1));
   }
-  #hud-tl { top: 18px; left: 22px; }
-  #hud-tr { top: 18px; right: 22px; text-align: right; }
-  #hud-bl { bottom: 16px; left: 22px; font-size: 12px; opacity: 0.7; }
-  #hud-br { bottom: 16px; right: 22px; font-size: 12px; text-align: right; }
+  #hud-tl { top: 18px; left: 22px; transform-origin: top left; }
+  #hud-tr { top: 18px; right: 22px; text-align: right; transform-origin: top right; }
+  #hud-bl { bottom: 16px; left: 22px; font-size: 12px; opacity: 0.7; transform-origin: bottom left; }
+  #hud-br { bottom: 16px; right: 22px; font-size: 12px; text-align: right; transform-origin: bottom right; }
 
   .hud .big { font-size: 20px; letter-spacing: 0.22em; }
   .hud .dim { opacity: 0.55; }
@@ -161,6 +163,9 @@ const CONFIG = {
 
   TYPE_SILHOUETTES: true,             // draw aircraft-type silhouettes (by category) instead of a chevron
   AIRLINE_TAGS: true,                 // draw small colored airline logo chips on labels
+
+  UI_SCALE: 2,                        // global multiplier for ALL text / icons / strokes / HUD.
+                                      // Bump for a bigger projector throw, drop toward 1 for dense traffic.
 
   // ---- CRT polish (kept subtle on purpose — this runs all night) ----
   SCANLINES: true,
@@ -510,6 +515,12 @@ poll();
 /* ============================================================================
  * Drawing
  * ==========================================================================*/
+// Global size multiplier for all overlay graphics (text, icons, strokes).
+// Geometry that tracks the screen (globe disc, ring radii, compass placement)
+// is left alone; only the drawn line weights / glyph / font sizes scale.
+const UI = CONFIG.UI_SCALE;
+const fontPx = (px) => Math.round(px * UI) + "px 'Share Tech Mono', monospace";
+
 function setGlow(color, blur) {
   if (CONFIG.GLOW) {
     ctx.shadowColor = color;
@@ -530,7 +541,7 @@ function drawGlobe() {
   // Graticule (faint local grid)
   setGlow(COL.green, CONFIG.GLOW_BLUR * 0.6);
   ctx.strokeStyle = "rgba(62,240,138,0.16)";
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1 * UI;
   ctx.beginPath();
   path(graticule());
   ctx.stroke();
@@ -539,7 +550,7 @@ function drawGlobe() {
   if (worldReady && land) {
     setGlow(COL.green, CONFIG.GLOW_BLUR);
     ctx.strokeStyle = "rgba(62,240,138,0.85)";
-    ctx.lineWidth = 1.4;
+    ctx.lineWidth = 1.4 * UI;
     ctx.beginPath();
     path(land);
     ctx.stroke();
@@ -552,7 +563,7 @@ function drawGlobe() {
 function drawRings() {
   ctx.save();
   setGlow(COL.green, CONFIG.GLOW_BLUR);
-  ctx.font = "12px 'Share Tech Mono', monospace";
+  ctx.font = fontPx(12);
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
 
@@ -567,15 +578,15 @@ function drawRings() {
     const r = ringPx(nm);
     const isOuter = nm + step > max + 0.5;
     ctx.strokeStyle = isOuter ? "rgba(62,240,138,0.9)" : "rgba(62,240,138,0.32)";
-    ctx.lineWidth = isOuter ? 1.8 : 1;
+    ctx.lineWidth = (isOuter ? 1.8 : 1) * UI;
     ctx.beginPath();
     ctx.arc(CX, CY, r, 0, Math.PI * 2);
     ctx.stroke();
 
     // Label along the upper-right diagonal so it stays clear of compass ticks.
     ctx.fillStyle = "rgba(62,240,138,0.7)";
-    const lx = CX + r * Math.cos(-Math.PI / 4) + 4;
-    const ly = CY + r * Math.sin(-Math.PI / 4) - 2;
+    const lx = CX + r * Math.cos(-Math.PI / 4) + 4 * UI;
+    const ly = CY + r * Math.sin(-Math.PI / 4) - 2 * UI;
     ctx.fillText(nm + "NM", lx, ly);
   }
   ctx.restore();
@@ -587,8 +598,8 @@ function drawCompass() {
   setGlow(COL.green, CONFIG.GLOW_BLUR);
   ctx.strokeStyle = "rgba(62,240,138,0.7)";
   ctx.fillStyle = "rgba(62,240,138,0.85)";
-  ctx.lineWidth = 1.2;
-  ctx.font = "13px 'Share Tech Mono', monospace";
+  ctx.lineWidth = 1.2 * UI;
+  ctx.font = fontPx(13);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -596,10 +607,10 @@ function drawCompass() {
     const a = brg * DEG;
     const sin = Math.sin(a), cos = Math.cos(a);
     const major = brg % 90 === 0;
-    const r0 = OUTER_R - (major ? 16 : 9);
+    const r0 = OUTER_R - (major ? 16 : 9) * UI;
     const x0 = CX + r0 * sin, y0 = CY - r0 * cos;
     const x1 = CX + OUTER_R * sin, y1 = CY - OUTER_R * cos;
-    ctx.lineWidth = major ? 1.8 : 1;
+    ctx.lineWidth = (major ? 1.8 : 1) * UI;
     ctx.beginPath();
     ctx.moveTo(x0, y0);
     ctx.lineTo(x1, y1);
@@ -607,14 +618,14 @@ function drawCompass() {
 
     if (major) {
       const lab = { 0: "N", 90: "E", 180: "S", 270: "W" }[brg];
-      const lr = OUTER_R + 16;
+      const lr = OUTER_R + 16 * UI;
       ctx.fillText(lab, CX + lr * sin, CY - lr * cos);
     } else {
-      const lr = OUTER_R + 13;
-      ctx.font = "10px 'Share Tech Mono', monospace";
+      const lr = OUTER_R + 13 * UI;
+      ctx.font = fontPx(10);
       ctx.fillStyle = "rgba(62,240,138,0.5)";
       ctx.fillText(pad2(brg / 10 | 0) + "0", CX + lr * sin, CY - lr * cos);
-      ctx.font = "13px 'Share Tech Mono', monospace";
+      ctx.font = fontPx(13);
       ctx.fillStyle = "rgba(62,240,138,0.85)";
     }
   }
@@ -630,21 +641,21 @@ function drawHome() {
   setGlow(COL.green, CONFIG.GLOW_BLUR);
   ctx.strokeStyle = COL.green;
   ctx.fillStyle = COL.green;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.5 * UI;
 
   // Reticle: small cross + ring + diamond
   ctx.beginPath();
-  ctx.arc(x, y, 5, 0, Math.PI * 2);
+  ctx.arc(x, y, 5 * UI, 0, Math.PI * 2);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y);
-  ctx.moveTo(x, y - 10); ctx.lineTo(x, y + 10);
+  ctx.moveTo(x - 10 * UI, y); ctx.lineTo(x + 10 * UI, y);
+  ctx.moveTo(x, y - 10 * UI); ctx.lineTo(x, y + 10 * UI);
   ctx.stroke();
 
-  ctx.font = "11px 'Share Tech Mono', monospace";
+  ctx.font = fontPx(11);
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.fillText(CONFIG.HOME_LABEL, x + 9, y + 7);
+  ctx.fillText(CONFIG.HOME_LABEL, x + 9 * UI, y + 7 * UI);
   ctx.restore();
   clearGlow();
 }
@@ -697,18 +708,19 @@ function roundRect(x, y, w, h, r) {
   ctx.closePath();
 }
 function drawChip(x, y, color, code, alpha) {
+  const w = 18 * UI, h = 13 * UI;
   ctx.save();
   ctx.globalAlpha = alpha;
-  setGlow(color, 4);
+  setGlow(color, 4 * UI);
   ctx.fillStyle = color;
-  roundRect(x, y, 18, 13, 2.5);
+  roundRect(x, y, w, h, 2.5 * UI);
   ctx.fill();
   clearGlow();
   ctx.fillStyle = chipTextColor(color);
-  ctx.font = "10px 'Share Tech Mono', monospace";
+  ctx.font = fontPx(10);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(code, x + 9, y + 7);
+  ctx.fillText(code, x + w / 2, y + h / 2 + 0.5 * UI);
   ctx.restore();
 }
 
@@ -744,7 +756,7 @@ function drawContacts(t) {
       if (fp) {
         setGlow(color, CONFIG.GLOW_BLUR);
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1.4;
+        ctx.lineWidth = 1.4 * UI;
         ctx.beginPath();
         ctx.moveTo(x, y);
         ctx.lineTo(fp[0], fp[1]);
@@ -763,10 +775,10 @@ function drawContacts(t) {
 
     if (CONFIG.TYPE_SILHOUETTES) {
       const key = silForCat(c.category);
-      const g = (SIL_SIZE[key] || 9) * (selected ? 1.35 : 1);
+      const g = (SIL_SIZE[key] || 9) * UI * (selected ? 1.35 : 1);
       ctx.save();
       ctx.scale(g, g);
-      ctx.lineWidth = (selected ? 2.0 : 1.4) / g;     // keep stroke width constant
+      ctx.lineWidth = (selected ? 2.0 : 1.4) * UI / g;   // constant scaled stroke width
       const p2 = silPath(key);
       ctx.stroke(p2);
       if (selected) { ctx.globalAlpha = alpha * 0.45; ctx.fill(p2); ctx.globalAlpha = alpha; }
@@ -776,7 +788,7 @@ function drawContacts(t) {
       if (key === "heli") {
         const rr = g * 0.95;
         const spin = t * 5.5;
-        ctx.lineWidth = 1.1;
+        ctx.lineWidth = 1.1 * UI;
         ctx.globalAlpha = alpha * 0.45;
         ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke();
         ctx.globalAlpha = alpha * 0.85;
@@ -791,8 +803,8 @@ function drawContacts(t) {
       }
     } else {
       // fallback chevron
-      const s = selected ? 9 : 7;
-      ctx.lineWidth = selected ? 2.4 : 1.6;
+      const s = (selected ? 9 : 7) * UI;
+      ctx.lineWidth = (selected ? 2.4 : 1.6) * UI;
       ctx.beginPath();
       ctx.moveTo(0, -s);
       ctx.lineTo(s * 0.7, s * 0.7);
@@ -808,32 +820,32 @@ function drawContacts(t) {
     if (selected) {
       setGlow(color, CONFIG.GLOW_BLUR);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1 * UI;
       ctx.globalAlpha = alpha * 0.8;
       ctx.beginPath();
-      ctx.arc(x, y, 16, 0, Math.PI * 2);
+      ctx.arc(x, y, 16 * UI, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = alpha;
     }
 
     // ---- airline chip + labels ----
     clearGlow();
-    let lx = x + 12;
-    const ly = y - 4;
+    let lx = x + 12 * UI;
+    const ly = y - 4 * UI;
 
     const al = CONFIG.AIRLINE_TAGS ? airlineFor(c.callsign) : null;
-    if (al) { drawChip(lx, ly - 6, al.color, al.iata, alpha); lx += 23; }
+    if (al) { drawChip(lx, ly - 6.5 * UI, al.color, al.iata, alpha); lx += 23 * UI; }
 
     ctx.shadowColor = color;
-    ctx.shadowBlur = CONFIG.GLOW ? 5 : 0;
+    ctx.shadowBlur = CONFIG.GLOW ? 5 * UI : 0;
     ctx.fillStyle = color;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    ctx.font = "13px 'Share Tech Mono', monospace";
+    ctx.font = fontPx(13);
     const call = c.callsign || c.hex.toUpperCase();
     ctx.fillText(call, lx, ly);
 
-    ctx.font = "10px 'Share Tech Mono', monospace";
+    ctx.font = fontPx(10);
     ctx.globalAlpha = alpha * 0.85;
     let altStr;
     if (c.alt === "GND") altStr = "GND";
@@ -844,7 +856,7 @@ function drawContacts(t) {
     let arrow = "";
     if (c.baroRate > 150) arrow = " ^";
     else if (c.baroRate < -150) arrow = " v";
-    ctx.fillText(altStr + (spdStr ? "  " + spdStr : "") + arrow, lx, ly + 13);
+    ctx.fillText(altStr + (spdStr ? "  " + spdStr : "") + arrow, lx, ly + 13 * UI);
 
     ctx.globalAlpha = 1;
     clearGlow();
@@ -946,6 +958,7 @@ requestAnimationFrame(frame);
  * ==========================================================================*/
 if (CONFIG.SCANLINES) document.getElementById("scanlines").classList.add("on");
 if (CONFIG.VIGNETTE) document.getElementById("vignette").classList.add("on");
+document.documentElement.style.setProperty("--ui", CONFIG.UI_SCALE);   // scales the DOM HUD
 
 // Hide cursor after idle.
 let cursorTimer = null;
@@ -961,7 +974,7 @@ pokeCursor();
 canvas.addEventListener("click", (ev) => {
   const t = nowSec();
   const mx = ev.clientX, my = ev.clientY;
-  let best = null, bestD = 22;
+  let best = null, bestD = 22 * UI;
   for (const c of contacts.values()) {
     const [lat, lon] = reckonPos(c, t);
     const p = projection([lon, lat]);

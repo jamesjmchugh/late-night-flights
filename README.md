@@ -53,6 +53,7 @@ when it isn't — it keeps retrying every `REFRESH_MS` and never blanks the scre
 
 | Key | Default | Purpose |
 |---|---|---|
+| `UI_SCALE` | `2` | global size multiplier for all text, icons, strokes, and HUD — raise for a bigger projector throw, lower toward `1` for dense traffic |
 | `MAX_RANGE_NM` | `150` | outer range-ring radius; the scope zoom follows it |
 | `ALERT_NM` | `10` | contacts inside this turn red |
 | `DROP_AFTER_S` | `30` | remove a contact this long after its last position |
