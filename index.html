@@ -161,7 +161,11 @@ const CONFIG = {
   ALERT_NM: 10,                       // contacts within this range turn red
   DROP_AFTER_S: 30,                   // remove a contact this long after last position
   STALE_AFTER_S: 8,                   // start fading a contact after this many s stale
-  PREDICT_MIN: 2.0,                   // velocity-vector tail = this many minutes of travel
+  TRAILS: true,                       // fading breadcrumb history behind each contact
+  TRAIL_SEC: 120,                     // seconds of history the trail spans
+  TRAIL_SAMPLE_S: 3,                  // seconds between breadcrumbs
+  PREDICT_MIN: 2.0,                   // velocity beam length (minutes of travel) —
+                                      // drawn only for the SELECTED contact
 
   TYPE_SILHOUETTES: true,             // draw aircraft-type silhouettes (by category) instead of a chevron
   AIRLINE_TAGS: true,                 // draw small colored airline logo chips on labels
@@ -915,8 +919,36 @@ function drawContacts(t) {
     const color = contactColor(c, dist);
     ctx.globalAlpha = alpha;
 
-    // ---- velocity vector (tail) ----
-    if (c.gs > 0) {
+    // ---- breadcrumb trail (fading position history behind the aircraft) ----
+    if (CONFIG.TRAILS) {
+      if (!c._trail) c._trail = [];
+      const last = c._trail[c._trail.length - 1];
+      if (!last || t - last.t >= CONFIG.TRAIL_SAMPLE_S) {
+        // A big jump (signal regained far away) means the history is bogus.
+        if (last && d3.geoDistance([last.lon, last.lat], [lon, lat]) * EARTH_NM > 8) {
+          c._trail = [];
+        }
+        c._trail.push({ lat, lon, t });
+      }
+      while (c._trail.length && t - c._trail[0].t > CONFIG.TRAIL_SEC) c._trail.shift();
+
+      // Dim dots, oldest faintest. No glow — they should sit behind everything.
+      clearGlow();
+      ctx.fillStyle = color;
+      for (const s of c._trail) {
+        const sp = projection([s.lon, s.lat]);
+        if (!sp) continue;
+        const age = (t - s.t) / CONFIG.TRAIL_SEC;          // 0 fresh .. 1 old
+        ctx.globalAlpha = alpha * 0.5 * (1 - age);
+        ctx.beginPath();
+        ctx.arc(sp[0], sp[1], 1.2 * UI, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = alpha;
+    }
+
+    // ---- velocity vector (selected contact only — everyone gets a trail) ----
+    if (selected && c.gs > 0) {
       const aheadNm = c.gs * (CONFIG.PREDICT_MIN / 60);
       const [flat, flon] = geoDest(lat, lon, c.track || 0, aheadNm);
       const fp = projection([flon, flat]);

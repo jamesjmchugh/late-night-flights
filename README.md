@@ -69,7 +69,8 @@ when it isn't — it keeps retrying every `REFRESH_MS` and never blanks the scre
 | `MAX_RANGE_NM` | `60` | outer range-ring radius; the scope zoom follows it. `60` matches typical home ADS-B coverage; raise it if you have a good outdoor antenna |
 | `ALERT_NM` | `10` | contacts inside this turn red |
 | `DROP_AFTER_S` | `30` | remove a contact this long after its last position |
-| `PREDICT_MIN` | `2.0` | velocity-vector tail length, in minutes of travel |
+| `TRAILS` / `TRAIL_SEC` | `true` / `120` | fading breadcrumb history behind every contact — reads well even when IAH traffic gets dense |
+| `PREDICT_MIN` | `2.0` | velocity-vector beam, in minutes of travel — drawn only for the **selected** contact |
 | `TYPE_SILHOUETTES` | `true` | draw aircraft-type silhouettes (by ADS-B category) vs. a plain chevron |
 | `AIRLINE_TAGS` | `true` | draw small colored airline logo chips on contact labels |
 | `SCANLINES` / `VIGNETTE` / `FLICKER` | `true` | CRT overlays (subtle by design) |
