@@ -162,13 +162,17 @@ const CONFIG = {
   DROP_AFTER_S: 30,                   // remove a contact this long after last position
   STALE_AFTER_S: 8,                   // start fading a contact after this many s stale
   TRAILS: true,                       // fading breadcrumb history behind each contact
-  TRAIL_SEC: 120,                     // seconds of history the trail spans
-  TRAIL_SAMPLE_S: 3,                  // seconds between breadcrumbs
+  TRAIL_SEC: 24,                      // seconds of history — fades out by the 4th crumb
+  TRAIL_SAMPLE_S: 6,                  // seconds between breadcrumbs
   PREDICT_MIN: 2.0,                   // velocity beam length (minutes of travel) —
                                       // drawn only for the SELECTED contact
 
   TYPE_SILHOUETTES: true,             // draw aircraft-type silhouettes (by category) instead of a chevron
-  AIRLINE_TAGS: true,                 // draw small colored airline logo chips on labels
+  AIRLINE_TAGS: true,                 // draw small airline chips on contact labels
+  AIRLINE_LOGOS: true,                // real airline logos (pixelized, fetched from a CDN
+                                      // by IATA code); falls back to colored IATA chips
+                                      // while loading / offline
+  AIRLINE_LOGO_URL: "https://images.kiwi.com/airlines/64x64/{iata}.png",
 
   UI_SCALE: 2,                        // global multiplier for ALL text / icons / strokes / HUD.
                                       // Bump for a bigger projector throw, drop toward 1 for dense traffic.
@@ -864,7 +868,31 @@ const CAT_SIL = { A1:"light", A2:"biz", A3:"narrow", A4:"narrow", A5:"wide",
 const SIL_SIZE = { light:8, biz:9, narrow:10, wide:13, mil:9, heli:9 };
 const silForCat = (cat) => CAT_SIL[cat] || "narrow";
 
-/* ---- Airline colored-square chips ----------------------------------------*/
+/* ---- Airline chips: pixelized logos with colored-square fallback ---------
+ * Logos are fetched lazily by IATA code, downsampled once to a small tile,
+ * then drawn scaled up with smoothing off for a chunky CRT-pixel look.
+ * Until a logo arrives (or if it never does), the generated brand-color +
+ * IATA chip below is used, so the scope still works fully offline.
+ * --------------------------------------------------------------------------*/
+const LOGO_PX = 14;                          // tile resolution before pixel upscale
+const logoCache = new Map();                 // iata -> canvas | "pending" | "failed"
+function logoFor(iata) {
+  const hit = logoCache.get(iata);
+  if (hit instanceof HTMLCanvasElement) return hit;
+  if (hit) return null;                      // pending or failed
+  logoCache.set(iata, "pending");
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement("canvas");
+    c.width = c.height = LOGO_PX;
+    c.getContext("2d").drawImage(img, 0, 0, LOGO_PX, LOGO_PX);
+    logoCache.set(iata, c);
+  };
+  img.onerror = () => logoCache.set(iata, "failed");
+  img.src = CONFIG.AIRLINE_LOGO_URL.replace("{iata}", iata);
+  return null;
+}
+
 function chipTextColor(hex) {
   const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
   return (0.299*r + 0.587*g + 0.114*b) > 140 ? "#04080a" : "#ffffff";
@@ -878,21 +906,39 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-function drawChip(x, y, color, code, alpha) {
+// Draws the chip and returns how far to advance the label cursor.
+function drawChip(x, y, al, alpha) {
+  const logo = CONFIG.AIRLINE_LOGOS ? logoFor(al.iata) : null;
+  if (logo) {
+    // Pixelized real logo on a dim light tile (logos are drawn for white bgs).
+    const s = 15 * UI, pad = 1.5 * UI;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "rgba(222,228,224,0.92)";
+    roundRect(x, y - 1 * UI, s, s, 2.5 * UI);
+    ctx.fill();
+    ctx.imageSmoothingEnabled = false;                 // chunky pixels
+    ctx.drawImage(logo, x + pad, y - 1 * UI + pad, s - pad * 2, s - pad * 2);
+    ctx.imageSmoothingEnabled = true;
+    ctx.restore();
+    return s + 5 * UI;
+  }
+
   const w = 18 * UI, h = 13 * UI;
   ctx.save();
   ctx.globalAlpha = alpha;
-  setGlow(color, 4 * UI);
-  ctx.fillStyle = color;
+  setGlow(al.color, 4 * UI);
+  ctx.fillStyle = al.color;
   roundRect(x, y, w, h, 2.5 * UI);
   ctx.fill();
   clearGlow();
-  ctx.fillStyle = chipTextColor(color);
+  ctx.fillStyle = chipTextColor(al.color);
   ctx.font = fontPx(10);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(code, x + w / 2, y + h / 2 + 0.5 * UI);
+  ctx.fillText(al.iata, x + w / 2, y + h / 2 + 0.5 * UI);
   ctx.restore();
+  return w + 5 * UI;
 }
 
 function drawContacts(t) {
@@ -1033,7 +1079,7 @@ function drawContacts(t) {
     const ly = y - 4 * UI;
 
     const al = CONFIG.AIRLINE_TAGS ? airlineFor(c.callsign) : null;
-    if (al) { drawChip(lx, ly - 6.5 * UI, al.color, al.iata, alpha); lx += 23 * UI; }
+    if (al) lx += drawChip(lx, ly - 6.5 * UI, al, alpha);
 
     ctx.shadowColor = color;
     ctx.shadowBlur = CONFIG.GLOW ? 5 * UI : 0;

@@ -72,7 +72,8 @@ when it isn't — it keeps retrying every `REFRESH_MS` and never blanks the scre
 | `TRAILS` / `TRAIL_SEC` | `true` / `120` | fading breadcrumb history behind every contact — reads well even when IAH traffic gets dense |
 | `PREDICT_MIN` | `2.0` | velocity-vector beam, in minutes of travel — drawn only for the **selected** contact |
 | `TYPE_SILHOUETTES` | `true` | draw aircraft-type silhouettes (by ADS-B category) vs. a plain chevron |
-| `AIRLINE_TAGS` | `true` | draw small colored airline logo chips on contact labels |
+| `AIRLINE_TAGS` | `true` | draw small airline chips on contact labels |
+| `AIRLINE_LOGOS` | `true` | pixelized real airline logos in the chips (CDN); colored IATA squares as fallback |
 | `SCANLINES` / `VIGNETTE` / `FLICKER` | `true` | CRT overlays (subtle by design) |
 | `FLICKER_AMOUNT` | `0.04` | brightness wobble; raise for more, `0` to disable |
 | `GLOW` / `GLOW_BLUR` | `true` / `8` | phosphor bloom (`shadowBlur`) |
@@ -87,11 +88,14 @@ narrow-body, 757, heavy/wide-body, military/fast (delta), and helicopter (with a
 rotor). All are inline vector paths — no external image assets — stroked as glowing wireframe
 to match the scope. Toggle with `TYPE_SILHOUETTES`.
 
-**Airline chips** are small colored squares (the airline's brand color + IATA code) keyed off
-the 3-letter ICAO callsign prefix, listed in the `AIRLINES_DB` map near the top of the script.
-Add or edit entries there — `UAL: {iata:"UA", color:"#0033A0"}`. These are generated chips, not
-trademarked logo files, so the page stays fully self-contained. GA/military/cargo callsigns
-with no match simply get no chip. Toggle with `AIRLINE_TAGS`.
+**Airline chips** are keyed off the 3-letter ICAO callsign prefix, listed in the `AIRLINES_DB`
+map near the top of the script. Add or edit entries there — `UAL: {iata:"UA", color:"#0033A0"}`.
+With `AIRLINE_LOGOS: true` (default) each chip shows the airline's **real logo**, fetched
+lazily from a CDN by IATA code (`AIRLINE_LOGO_URL`), downsampled to a 14-px tile and drawn
+with smoothing off for a pixelized CRT look. While a logo is loading — or offline / for
+airlines the CDN lacks — the chip falls back to the generated brand-color + IATA square, so
+the page still works with no network. GA/military/cargo callsigns with no `AIRLINES_DB` match
+get no chip. Master toggle: `AIRLINE_TAGS`.
 
 ---
 
