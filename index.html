@@ -357,8 +357,11 @@ async function rebuildBasemap() {
   if (!CONFIG.BASEMAP) return;
   const token = ++basemapToken;
 
-  // Geographic window of the scope disc, with a small margin.
-  const rDeg = (CONFIG.MAX_RANGE_NM / 60) * 1.06;
+  // Geographic window of the whole canvas (the map runs past the outer ring
+  // to the screen edges), with a small margin.
+  const k = projection.scale();
+  const diagPx = Math.hypot(W, H) / 2;               // center -> farthest corner
+  const rDeg = Math.asin(Math.min(1, diagPx / k)) * RAD * 1.06;
   const lat0 = CONFIG.HOME_LAT, lon0 = CONFIG.HOME_LON;
   const cosLat = Math.cos(lat0 * DEG);
   const latMin = Math.max(-85, lat0 - rDeg), latMax = Math.min(85, lat0 + rDeg);
@@ -405,20 +408,21 @@ async function rebuildBasemap() {
     return;
   }
 
-  // Reproject mercator -> orthographic. Inverse orthographic centered on HOME:
-  // X,Y are unit-sphere screen offsets, then standard closed-form inversion.
-  const size = Math.ceil(OUTER_R * 2 * DPR);
+  // Reproject mercator -> orthographic over the FULL canvas. Inverse
+  // orthographic centered on HOME: X,Y are unit-sphere screen offsets, then
+  // standard closed-form inversion.
+  const outW = Math.ceil(W * DPR), outH = Math.ceil(H * DPR);
   const out = document.createElement("canvas");
-  out.width = out.height = size;
+  out.width = outW;
+  out.height = outH;
   const octx = out.getContext("2d");
-  const dst = octx.createImageData(size, size);
+  const dst = octx.createImageData(outW, outH);
   const S = src.data, D = dst.data;
 
-  const k = projection.scale();
   const sinLat0 = Math.sin(lat0 * DEG), cosLat0 = cosLat;
   const worldPx = TILE_PX * nTiles;                   // full mercator extent at z, in px
-  const half = size / 2, R2 = half * half;
   const mw = merc.width, mh = merc.height;
+  const cx = CX * DPR, cy = CY * DPR, ringPxD = OUTER_R * DPR;
 
   // Tone curve LUT: gamma lift (brings up dark roads/water edges) then dim.
   const LUT = new Uint8Array(256);
@@ -427,13 +431,14 @@ async function rebuildBasemap() {
       255 * Math.pow(v / 255, 1 / CONFIG.BASEMAP_GAMMA) * CONFIG.BASEMAP_BRIGHTNESS);
   }
 
-  for (let j = 0; j < size; j++) {
-    const Y = (half - (j + 0.5)) / (k * DPR);         // north-positive sphere offset
-    for (let i = 0; i < size; i++) {
-      const dx = i + 0.5 - half, dy = j + 0.5 - half;
-      if (dx * dx + dy * dy > R2) continue;           // outside the scope disc
-      const X = dx / (k * DPR);
-      const cosC = Math.sqrt(Math.max(0, 1 - X * X - Y * Y));
+  for (let j = 0; j < outH; j++) {
+    const Y = (cy - (j + 0.5)) / (k * DPR);           // north-positive sphere offset
+    const dy = j + 0.5 - cy;
+    for (let i = 0; i < outW; i++) {
+      const X = (i + 0.5 - cx) / (k * DPR);
+      const r2 = X * X + Y * Y;
+      if (r2 >= 1) continue;                          // past the globe horizon
+      const cosC = Math.sqrt(1 - r2);
       const lat = Math.asin(cosC * sinLat0 + Y * cosLat0) * RAD;
       const lon = lon0 + Math.atan2(X, cosC * cosLat0 - Y * sinLat0) * RAD;
 
@@ -441,10 +446,16 @@ async function rebuildBasemap() {
       const py = (mercY01(lat) * worldPx - ty0 * TILE_PX) | 0;
       if (px < 0 || py < 0 || px >= mw || py >= mh) continue;
 
-      const si = (py * mw + px) * 4, di = (j * size + i) * 4;
-      D[di]     = LUT[S[si]];
-      D[di + 1] = LUT[S[si + 1]];
-      D[di + 2] = LUT[S[si + 2]];
+      // Beyond the outer ring, ease the map down so the scope stays focal.
+      const dx = i + 0.5 - cx;
+      const rPx = Math.sqrt(dx * dx + dy * dy);
+      const fade = rPx <= ringPxD ? 1
+        : Math.max(0.45, 1 - 0.55 * ((rPx - ringPxD) / ringPxD));
+
+      const si = (py * mw + px) * 4, di = (j * outW + i) * 4;
+      D[di]     = LUT[S[si]]     * fade;
+      D[di + 1] = LUT[S[si + 1]] * fade;
+      D[di + 2] = LUT[S[si + 2]] * fade;
       D[di + 3] = 255;
     }
   }
@@ -681,17 +692,18 @@ function setGlow(color, blur) {
 function clearGlow() { ctx.shadowBlur = 0; }
 
 function drawGlobe() {
-  // Clip everything geographic to the outer scope circle.
+  // Dark raster basemap (pre-reprojected full-canvas bitmap; runs past the
+  // outer ring with a baked-in fade — see rebuildBasemap).
+  if (basemap) {
+    clearGlow();
+    ctx.drawImage(basemap, 0, 0, W, H);
+  }
+
+  // Clip the wireframe layers to the outer scope circle.
   ctx.save();
   ctx.beginPath();
   ctx.arc(CX, CY, OUTER_R, 0, Math.PI * 2);
   ctx.clip();
-
-  // Dark raster basemap (pre-reprojected; see rebuildBasemap)
-  if (basemap) {
-    clearGlow();
-    ctx.drawImage(basemap, CX - OUTER_R, CY - OUTER_R, OUTER_R * 2, OUTER_R * 2);
-  }
 
   // Graticule (faint local grid)
   setGlow(COL.green, CONFIG.GLOW_BLUR * 0.6);
