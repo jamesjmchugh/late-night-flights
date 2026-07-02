@@ -24,8 +24,17 @@ Or any static host — just serve the folder. Double-click the scope to toggle f
 Click an aircraft to select it.
 
 > An internet connection is needed on first load to pull d3, topojson, the coastline TopoJSON,
-> and the Share Tech Mono font from CDNs. If the coastline file can't load, the globe still
-> renders rings + graticule + traffic; it just omits land outlines.
+> the Share Tech Mono font, and the dark basemap tiles from CDNs. If the coastline file can't
+> load, the globe still renders rings + graticule + traffic; if the basemap tiles can't load,
+> the scope just stays wireframe-only. Nothing ever crashes the display.
+
+### Dark basemap
+
+A very dark raster basemap (CARTO *dark, no labels* web-mercator tiles — map data
+© OpenStreetMap contributors, tiles © CARTO) is stitched offscreen, reprojected
+pixel-by-pixel into the scope's orthographic view, dimmed by `BASEMAP_BRIGHTNESS`, and
+cached — so per frame it costs a single `drawImage`. It shows the local roads / water /
+urban texture around HOME without competing with the phosphor wireframe. Toggle with `BASEMAP`.
 
 ---
 
@@ -35,11 +44,11 @@ Edit the `CONFIG` block at the top of `index.html`:
 
 ```js
 const CONFIG = {
-  HOME_LAT: 29.97,        // your house — center of globe + range rings
-  HOME_LON: -95.69,
+  HOME_LAT: 29.95273,     // your house — center of globe + range rings
+  HOME_LON: -95.74904,
   USE_MOCK: false,        // <-- turn off mock
   DATA_URL: "http://localhost:8080/tar1090/data/aircraft.json",  // <-- your endpoint
-  MAX_RANGE_NM: 150,
+  MAX_RANGE_NM: 60,
   REFRESH_MS: 1000,
   // ...CRT/visual knobs below...
 };
@@ -54,7 +63,10 @@ when it isn't — it keeps retrying every `REFRESH_MS` and never blanks the scre
 | Key | Default | Purpose |
 |---|---|---|
 | `UI_SCALE` | `2` | global size multiplier for all text, icons, strokes, and HUD — raise for a bigger projector throw, lower toward `1` for dense traffic |
-| `MAX_RANGE_NM` | `150` | outer range-ring radius; the scope zoom follows it |
+| `BASEMAP` | `true` | very dark raster basemap (local roads/water) under the wireframe |
+| `BASEMAP_BRIGHTNESS` | `0.65` | 0–1 RGB multiplier on the basemap — lower = darker |
+| `BASEMAP_GAMMA` | `1.6` | >1 lifts dark detail (roads / water edges) without washing the map out |
+| `MAX_RANGE_NM` | `60` | outer range-ring radius; the scope zoom follows it. `60` matches typical home ADS-B coverage; raise it if you have a good outdoor antenna |
 | `ALERT_NM` | `10` | contacts inside this turn red |
 | `DROP_AFTER_S` | `30` | remove a contact this long after its last position |
 | `PREDICT_MIN` | `2.0` | velocity-vector tail length, in minutes of travel |

@@ -129,7 +129,7 @@
   <div id="hud-tr" class="hud">
     <span id="status" class="nosignal">NO SIGNAL</span>
     <br /><span class="label">SRC </span><span id="src">MOCK</span>
-    <br /><span class="label">RNG </span><span id="rng">150NM</span>
+    <br /><span class="label">RNG </span><span id="rng">--</span>
   </div>
 
   <div id="hud-bl" class="hud">OVERHEAD VECTOR SCOPE // PHOSPHOR-7</div>
@@ -140,10 +140,11 @@
  * CONFIG  — edit these.
  * ==========================================================================*/
 const CONFIG = {
-  // Center of the scope / origin of the range rings. Default: Cypress, TX.
-  HOME_LAT: 29.97,
-  HOME_LON: -95.69,
-  HOME_LABEL: "KCYP",                 // short tag shown at the home marker
+  // Center of the scope / origin of the range rings.
+  // Default: 19522 Crescent Haven Dr, Cypress, TX 77433.
+  HOME_LAT: 29.95273,
+  HOME_LON: -95.74904,
+  HOME_LABEL: "HOME",                 // short tag shown at the home marker
 
   // Live data endpoint (readsb / tar1090 aircraft.json).
   DATA_URL: "http://localhost:8080/tar1090/data/aircraft.json",
@@ -152,7 +153,8 @@ const CONFIG = {
   // develop / demo with no receiver. Set false once your receiver is up.
   USE_MOCK: true,
 
-  MAX_RANGE_NM: 150,                  // outer range ring radius (nautical miles)
+  MAX_RANGE_NM: 60,                   // outer range ring radius (nautical miles) —
+                                      // realistic coverage for a home ADS-B receiver
   REFRESH_MS: 1000,                   // poll interval
   UNITS: "imperial",                  // "imperial" (ft/kt/nm). Only imperial implemented.
 
@@ -174,6 +176,13 @@ const CONFIG = {
   FLICKER_AMOUNT: 0.04,               // 0 = none, 0.04 = barely-there
   GLOW: true,                         // master switch for shadowBlur bloom
   GLOW_BLUR: 8,                       // shadowBlur radius for green strokes
+
+  // ---- Very dark raster basemap under the wireframe ----
+  BASEMAP: true,                      // draw local geography (roads/water) beneath the scope
+  BASEMAP_URL: "https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png",
+  BASEMAP_BRIGHTNESS: 0.65,           // 0..1 RGB multiplier — keep low so phosphor lines dominate
+  BASEMAP_GAMMA: 1.6,                 // >1 lifts dark detail (roads vs land) without washing out
+  BASEMAP_MAX_ZOOM: 12,               // tile zoom ceiling (relevant at small MAX_RANGE_NM)
 
   CURSOR_IDLE_MS: 2500,               // hide mouse cursor after this idle time
 
@@ -292,8 +301,10 @@ let land = null;        // GeoJSON feature for land (coastlines)
 let worldReady = false;
 
 // Graticule limited to a window around HOME so we get a fine local grid.
+// Step tightens at short range so the disc still shows a few grid lines.
+const GRAT_STEP = CONFIG.MAX_RANGE_NM <= 75 ? 0.5 : 1;
 const graticule = d3.geoGraticule()
-  .stepMinor([1, 1])
+  .stepMinor([GRAT_STEP, GRAT_STEP])
   .extentMinor([
     [CONFIG.HOME_LON - 6, CONFIG.HOME_LAT - 6],
     [CONFIG.HOME_LON + 6, CONFIG.HOME_LAT + 6.0001],
@@ -311,6 +322,144 @@ async function loadWorld() {
   }
 }
 loadWorld();
+
+/* ============================================================================
+ * Dark basemap (raster underlay)
+ * ----------------------------------------------------------------------------
+ * Web-mercator tiles (CARTO dark, no labels) are fetched once, stitched into
+ * an offscreen canvas, then reprojected pixel-by-pixel into the scope's
+ * orthographic view and dimmed by BASEMAP_BRIGHTNESS. The projection is static
+ * (fixed center + zoom), so this costs one pass at load / resize; per frame
+ * it's a single drawImage. Fails soft: any network / CORS problem just leaves
+ * the wireframe-only look.
+ * ==========================================================================*/
+const TILE_PX = 256;
+let basemap = null;               // finished orthographic bitmap, drawn in drawGlobe()
+let basemapToken = 0;             // invalidates in-flight rebuilds on resize
+
+function loadTile(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";                    // needed for getImageData
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);                // missing tile: stays black
+    img.src = url;
+  });
+}
+
+// Web-mercator Y in [0,1) for a latitude.
+function mercY01(latDeg) {
+  const s = Math.sin(latDeg * DEG);
+  return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
+}
+
+async function rebuildBasemap() {
+  if (!CONFIG.BASEMAP) return;
+  const token = ++basemapToken;
+
+  // Geographic window of the scope disc, with a small margin.
+  const rDeg = (CONFIG.MAX_RANGE_NM / 60) * 1.06;
+  const lat0 = CONFIG.HOME_LAT, lon0 = CONFIG.HOME_LON;
+  const cosLat = Math.cos(lat0 * DEG);
+  const latMin = Math.max(-85, lat0 - rDeg), latMax = Math.min(85, lat0 + rDeg);
+  const lonMin = lon0 - rDeg / cosLat, lonMax = lon0 + rDeg / cosLat;
+
+  // Zoom whose ground resolution matches the screen, backed off to a sane
+  // tile count (each level down quarters the count).
+  const metersPerPx = (CONFIG.MAX_RANGE_NM * 1852) / (OUTER_R * DPR);
+  let z = Math.round(Math.log2((156543.03 * cosLat) / metersPerPx));
+  z = Math.max(3, Math.min(CONFIG.BASEMAP_MAX_ZOOM, z));
+  let tx0, ty0, tx1, ty1;
+  for (;; z--) {
+    const n = 1 << z;
+    tx0 = Math.floor(((lonMin + 180) / 360) * n);
+    tx1 = Math.floor(((lonMax + 180) / 360) * n);
+    ty0 = Math.floor(mercY01(latMax) * n);
+    ty1 = Math.floor(mercY01(latMin) * n);
+    if (z <= 3 || (tx1 - tx0 + 1) * (ty1 - ty0 + 1) <= 150) break;
+  }
+
+  // Stitch tiles into one mercator canvas.
+  const cols = tx1 - tx0 + 1, rows = ty1 - ty0 + 1, nTiles = 1 << z;
+  const merc = document.createElement("canvas");
+  merc.width = cols * TILE_PX;
+  merc.height = rows * TILE_PX;
+  const mctx = merc.getContext("2d", { willReadFrequently: true });
+  await Promise.all(Array.from({ length: cols * rows }, (_, i) => {
+    const tx = tx0 + (i % cols), ty = ty0 + ((i / cols) | 0);
+    const url = CONFIG.BASEMAP_URL
+      .replace("{z}", z)
+      .replace("{x}", ((tx % nTiles) + nTiles) % nTiles)
+      .replace("{y}", ty);
+    return loadTile(url).then((img) => {
+      if (img) mctx.drawImage(img, (tx - tx0) * TILE_PX, (ty - ty0) * TILE_PX);
+    });
+  }));
+  if (token !== basemapToken) return;                 // superseded by a resize
+
+  let src;
+  try {
+    src = mctx.getImageData(0, 0, merc.width, merc.height);
+  } catch (e) {
+    console.warn("basemap disabled (canvas tainted — tiles served without CORS?)", e);
+    return;
+  }
+
+  // Reproject mercator -> orthographic. Inverse orthographic centered on HOME:
+  // X,Y are unit-sphere screen offsets, then standard closed-form inversion.
+  const size = Math.ceil(OUTER_R * 2 * DPR);
+  const out = document.createElement("canvas");
+  out.width = out.height = size;
+  const octx = out.getContext("2d");
+  const dst = octx.createImageData(size, size);
+  const S = src.data, D = dst.data;
+
+  const k = projection.scale();
+  const sinLat0 = Math.sin(lat0 * DEG), cosLat0 = cosLat;
+  const worldPx = TILE_PX * nTiles;                   // full mercator extent at z, in px
+  const half = size / 2, R2 = half * half;
+  const mw = merc.width, mh = merc.height;
+
+  // Tone curve LUT: gamma lift (brings up dark roads/water edges) then dim.
+  const LUT = new Uint8Array(256);
+  for (let v = 0; v < 256; v++) {
+    LUT[v] = Math.min(255,
+      255 * Math.pow(v / 255, 1 / CONFIG.BASEMAP_GAMMA) * CONFIG.BASEMAP_BRIGHTNESS);
+  }
+
+  for (let j = 0; j < size; j++) {
+    const Y = (half - (j + 0.5)) / (k * DPR);         // north-positive sphere offset
+    for (let i = 0; i < size; i++) {
+      const dx = i + 0.5 - half, dy = j + 0.5 - half;
+      if (dx * dx + dy * dy > R2) continue;           // outside the scope disc
+      const X = dx / (k * DPR);
+      const cosC = Math.sqrt(Math.max(0, 1 - X * X - Y * Y));
+      const lat = Math.asin(cosC * sinLat0 + Y * cosLat0) * RAD;
+      const lon = lon0 + Math.atan2(X, cosC * cosLat0 - Y * sinLat0) * RAD;
+
+      const px = (((lon + 180) / 360) * worldPx - tx0 * TILE_PX) | 0;
+      const py = (mercY01(lat) * worldPx - ty0 * TILE_PX) | 0;
+      if (px < 0 || py < 0 || px >= mw || py >= mh) continue;
+
+      const si = (py * mw + px) * 4, di = (j * size + i) * 4;
+      D[di]     = LUT[S[si]];
+      D[di + 1] = LUT[S[si + 1]];
+      D[di + 2] = LUT[S[si + 2]];
+      D[di + 3] = 255;
+    }
+  }
+  octx.putImageData(dst, 0, 0);
+  basemap = out;
+}
+rebuildBasemap();
+
+// The disc always shows the same geographic window, so the old bitmap stays
+// geometrically valid while resizing — just rebuild (debounced) for sharpness.
+let basemapResizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(basemapResizeTimer);
+  basemapResizeTimer = setTimeout(rebuildBasemap, 350);
+});
 
 /* ============================================================================
  * Aircraft state
@@ -537,6 +686,12 @@ function drawGlobe() {
   ctx.beginPath();
   ctx.arc(CX, CY, OUTER_R, 0, Math.PI * 2);
   ctx.clip();
+
+  // Dark raster basemap (pre-reprojected; see rebuildBasemap)
+  if (basemap) {
+    clearGlow();
+    ctx.drawImage(basemap, CX - OUTER_R, CY - OUTER_R, OUTER_R * 2, OUTER_R * 2);
+  }
 
   // Graticule (faint local grid)
   setGlow(COL.green, CONFIG.GLOW_BLUR * 0.6);
